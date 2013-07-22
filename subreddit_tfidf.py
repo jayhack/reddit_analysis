@@ -3,11 +3,15 @@
 import os
 import sys
 import math
+import pickle
 from collections import defaultdict
 
-
 #--- nltk ---
-import nltk
+from nltk import wordpunct_tokenize
+
+
+
+
 
 # Class: CorpusManager
 # -----------------------
@@ -17,16 +21,65 @@ class CorpusManager:
 	#--- texts ---
 	documents = []
 
+
 	#--- word counts ---
-	word_counts = defaultdict (lambda: 0)				#global number of word counts
-	word_counts_by_document = {}						#word counts per document
+	word_counts_filepath = 'saved_data/word_counts.obj'
+	word_counts_by_document_filepath = 'saved_data/word_counts_by_document.obj'
+	
+	word_counts 				= defaultdict (lambda: 0)			#global number of word counts
+	word_counts_nondefault 		= {}
+
+	word_counts_by_document 			= {}						#word counts per document
+	word_counts_by_document_nondefault 	= {}
+
+
+
+	########################################################################################################################
+	###############################[--- DATA MANAGEMENT (LOADING, SAVING) ---]##############################################
+	########################################################################################################################
+
+	# Function: convert_to_regular_dict
+	# ---------------------------------
+	# converts default_dict to a non-default_dict and returns it
+	def convert_to_nondefault_dict (self, default_dict):
+		non_default_dict = {}
+		for element in default_dict.keys ():
+			non_default_dict[element] = default_dict[element]
+		return non_default_dict
+
+
+	# Function: get_non_defaultdict_versions
+	# --------------------------------------
+	# will fill in word_counts_nondefault and word_counts_by_document_nondefault with non-defaultdict versions of their
+	# respective counterparts
+	def get_non_defaultdict_versions (self):
+		self.word_counts_nondefault = self.convert_to_nondefault_dict (self.word_counts)
+		for doc_name in self.word_counts_by_document.keys ():
+			self.word_counts_by_document_nondefault[doc_name] = self.convert_to_nondefault_dict (self.word_counts_by_document[doc_name])
+
+
+	# Function: load_word_counts
+	# --------------------------
+	# will unload word_counts and word_counts_by_doc from a pickled file
+	def load_word_counts (self):
+		self.word_counts = pickle.load(open(self.word_counts_filepath, 'rb'))
+		self.word_counts_by_document = pickle.load (open(self.word_counts_by_document_filepath, 'rb'))
+
+
+	# Function: save_word_counts
+	# --------------------------
+	# packs word_counts and word_counts_by_documents into pickled files
+	def save_word_counts (self):
+		self.get_non_defaultdict_versions ()
+
+		pickle.dump (self.word_counts_nondefault, open(self.word_counts_filepath, 'wb'))
+		pickle.dump (self.word_counts_by_document_nondefault, open(self.word_counts_by_document_filepath, 'wb'))
 
 
 
 	########################################################################################################################
 	###############################[--- CONSTRUCTOR/INITIALIZATION ---]#####################################################
 	########################################################################################################################
-
 
 	# Function: fill_word_counts
 	# --------------------------
@@ -40,6 +93,7 @@ class CorpusManager:
 
 		### Step 2: get word counts ###
 		for document in self.documents:
+			print "	- processing " + document['name']
 			for word in document['content']:
 				self.word_counts[word] += 1
 				self.word_counts_by_document[document['name']][word] += 1
@@ -54,6 +108,15 @@ class CorpusManager:
 	def __init__ (self, documents_list):
 		self.documents = documents_list
 		self.fill_word_counts ()
+		self.save_word_counts ()
+
+
+	########################################################################################################################
+	###############################[--- DESTRUCTOR/SAVING STATE ---]########################################################
+	########################################################################################################################
+
+
+
 
 
 
@@ -96,40 +159,36 @@ class CorpusManager:
 
 
 
+# Function: make_document
+# -----------------------
+# given the filepath to a textfile, this will create and return an appropriate 
+# 'document' representation. This consists of a dict with the following fields:
+# - name: name of the document (should be unique)
+# - content: a list of words that are in the document
+def make_document (filepath):
+	text_string = open(filepath, 'r').read ()
+	content = wordpunct_tokenize (text_string)
+	name = filepath.split('/')[-1].split('.')[0]
+	return {'name':name, 'content':content}
+
 
 
 
 if __name__ == '__main__':
 
-	doc1 = {'name':'doc1', 'content':['hello', 'world', 'this']}
-	doc2 = {'name':'doc2', 'content':['hello', 'shanghai']}
-	doc3 = {'name':'doc3', 'content':['hello', 'world', 'thiss']}
-
-	corpus_manger = CorpusManager ([doc1, doc2, doc3])
-	print corpus_manger.tf_idf ('doc1', 'world')
-	print corpus_manger.tf_idf ('doc2', 'shanghai')
-
-
-	# #make a 'Text'
-	# filename_futurama = 'data/all_comments/futurama.txt'
-	# filename_anime = 'data/all_comments/anime.txt'
-	# filename_comics = 'data/all_comments/comics.txt'
-
-	# futurama = open (filename_futurama, 'r')
-	# anime = open (filename_anime, 'r')
-	# comics = open (filename_comics, 'r')
-
-	# futurama_text = Text(futurama.read().lower())
-	# anime_text = Text (anime.read().lower())
-	# comics_text = Text(comics.read().lower())
+	### Step 1: get a list of all documents as strings ###
+	print "---> Status: loading/creating the document representations"
+	documents = []
+	all_comments_dir = os.path.join (os.getcwd(), 'data_dev/all_comments')
+	for f in os.listdir (all_comments_dir):
+		comment_filepath = os.path.join(all_comments_dir, f)
+		new_document = make_document (comment_filepath)
+		documents.append (new_document)
+		print "	- added document: ", new_document['name']
 
 
-	# test_text_1 = Text(['hello', ',', 'world', '!', 'raptor'])
-	# test_text_2 = Text(['hello', ',', 'world', 'raptor', 'raptor'])
+	### Step 2: create the CorpusManager ###
+	print "---> Status: creating corpus manager"
+	corpus_manager = CorpusManager (documents)
 
-	# all_texts = [futurama_text, anime_text, comics_text]
-	# text_reader = TextCollection ([test_text_1, test_text_2])
 
-	# #works, ostensibly, up to here
-	# print text_reader.tf_idf ('raptor', test_text_1)
-	# print text_reader.tf_idf ('raptor', test_text_2)
