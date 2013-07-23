@@ -13,8 +13,6 @@ from nltk import wordpunct_tokenize
 
 
 
-
-
 # Class: CorpusManager
 # -----------------------
 # takes care of all things tf.idf related, including classification
@@ -22,6 +20,7 @@ class CorpusManager:
 
 	#--- texts ---
 	documents = []
+	documents_filepath = 'saved_data/documents.obj'
 
 
 	#--- word counts ---
@@ -33,6 +32,9 @@ class CorpusManager:
 
 	word_counts_by_document 			= {}						#word counts per document
 	word_counts_by_document_nondefault 	= {}
+
+	min_number_of_occurences = 5 									#the minimumb number of occurences for it to be recorded
+	min_number_of_occurences_by_document = 2
 
 
 
@@ -100,10 +102,28 @@ class CorpusManager:
 
 
 
+	# Function: save_documents
+	# ------------------------
+	# pickles documents into a file
+	def save_documents (self):
+		
+		pickle.dump (self.documents, open(self.documents_filepath, 'wb'))
+
+	# Function: load_documents
+	# ------------------------
+	# load documents
+	def load_documents (self):
+
+		self.documents = pickle.load (open(self.documents_filepath, 'rb'))
+
+
+
+
+
 
 
 	########################################################################################################################
-	###############################[--- CONSTRUCTOR/INITIALIZATION ---]#####################################################
+	###############################[--- CONSTRUCTOR/INITIALIZATION, DESTRUCTOR ---]#########################################
 	########################################################################################################################
 
 	# Function: fill_word_counts
@@ -116,12 +136,29 @@ class CorpusManager:
 		for document in self.documents:
 			self.word_counts_by_document[document['name']] = defaultdict(lambda: 0)
 
+
 		### Step 2: get word counts ###
 		for document in self.documents:
 			print "	- processing " + document['name']
 			for word in document['content']:
 				self.word_counts[word] += 1
 				self.word_counts_by_document[document['name']][word] += 1
+
+		### Step 3: eliminate words that rarely occur ###
+		for word in self.word_counts.keys():
+			if self.word_counts[word] < self.min_number_of_occurences:
+				print "		- NOTICE: removing the following word: " + word
+				del self.word_counts[word]
+
+		remove_pairs = []
+		for doc_name in self.word_counts_by_document.keys ():
+			for word in self.word_counts_by_document[doc_name]:
+				if self.word_counts_by_document[doc_name][word] < self.min_number_of_occurences_by_document:
+					print "		- NOTICE: removing the following pair: ", (doc_name, word)
+					remove_pairs.append ((doc_name, word))
+		for pair in remove_pairs:
+			del self.word_counts_by_document[pair[0]][pair[1]]
+
 
 
 
@@ -131,22 +168,34 @@ class CorpusManager:
 	# - 'name' -> name of the text
 	# - 'content' -> tokenized list of words occuring in the document
 	# by default, it will find the word counts itself (i.e. it wont load them) and it will save them.
-	def __init__ (self, documents_list, load=False, save=True):
+	def __init__ (self, documents_list=None, load=False, save=False):
+
+		self.load = load 
+		self.save = save
 
 		### Step 1: get documents ###
 		self.documents = documents_list
 	
 		### Step 2: get word counts ###
 		if not load:
-			print "	- finding word counts manually"
+			print "	### Getting documents and word counts manually ###"
+			self.documents = documents_list
 			self.fill_word_counts ()
 		else:
-			print "	- loading word counts from pickled files"
+			print "	### loading documents and word counts from a pickled file ###"
+			self.load_documents ()
 			self.load_word_counts ()
 
 
-
-
+	# Function: destructor
+	# --------------------
+	# will save data where appropriately 
+	def __del__ (self):
+		if save:
+			print "---> Status: saving documents"
+			self.save_documents ()
+			print "---> Status: saving word counts"
+			self.save_word_counts ()
 
 
 
@@ -188,10 +237,10 @@ class CorpusManager:
 	
 		return self.tf(doc_name, query_word) * self.idf (query_word)
 
-
 	# Function: compute_tfidf_vectors
 	# -------------------------------
-	# will get the tfidf_vectors for each document in document_list
+	# will get the tfidf_vectors for each document in document_list. 
+	# Note: (as of now, only contains top 2000 elements.)
 	def compute_tfidf_vectors (self):
 
 		for document in self.documents:
@@ -200,7 +249,43 @@ class CorpusManager:
 			for word in self.word_counts_by_document[document['name']].keys ():
 				tfidf_vector[word] = self.tfidf (document['name'], word)
 
-			document['tfidf_vector'] = tfidf_vector
+			document['tfidf_vector'] = dict(sorted(tfidf_vector.iteritems(), key=operator.itemgetter(1), reverse=True)[0:2000])
+
+
+
+	# Function: normalize_vector
+	# --------------------------
+	# given a vec mapping keys to numbers, this will return a normalized version
+	# (i.e. the length of the vector will be 1)
+	def normalize_vector (self, vec):
+		length = 0.0
+		for element in vec.keys ():
+			length += vec[element]*vec[element]
+		length = math.sqrt(length)
+
+		normalized_vec = {}
+		for element in vec.keys ():
+			normalized_vec[element] = vec[element] / length
+		return normalized_vec
+
+
+	# Function: tfidf_cosine_sim
+	# --------------------------
+	# given two documents, this will calculate the cosine similarity between them
+	def tfidf_cosine_sim (self, doc1, doc2):
+
+		doc1_normalized_vec = self.normalize_vector (doc1['tfidf_vector'])
+		doc2_normalized_vec = self.normalize_vector (doc2['tfidf_vector'])
+
+		dot_product = 0.0
+		common_words = set(doc1_normalized_vec).intersection(set(doc2_normalized_vec))
+		for word in common_words:
+			dot_product += doc1_normalized_vec[word] * doc2_normalized_vec[word]
+		return dot_product
+
+
+
+
 
 
 
@@ -224,6 +309,22 @@ class CorpusManager:
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Function: make_document
 # -----------------------
 # given the filepath to a textfile, this will create and return an appropriate 
@@ -241,21 +342,25 @@ def make_document (filepath):
 
 if __name__ == '__main__':
 
+	save = False
+
+	if len(sys.argv == 1):
+		save 
+
 	### Step 1: get a list of all documents as strings ###
-	print "---> Status: loading/creating the document representations"
-	documents = []
-	all_comments_dir = os.path.join (os.getcwd(), 'data_dev/all_comments')
-	for f in os.listdir (all_comments_dir):
-		comment_filepath = os.path.join(all_comments_dir, f)
-		new_document = make_document (comment_filepath)
-		documents.append (new_document)
-		print "	- added document: ", new_document['name']
+	# print "---> Status: loading/creating the document representations"
+	# documents = []
+	# all_comments_dir = os.path.join (os.getcwd(), 'data_dev/all_comments')
+	# for f in os.listdir (all_comments_dir):
+		# comment_filepath = os.path.join(all_comments_dir, f)
+		# new_document = make_document (comment_filepath)
+		# documents.append (new_document)
+		# print "	- added document: ", new_document['name']
 
 
 	### Step 2: create the CorpusManager ###
 	print "---> Status: creating corpus manager"
-	corpus_manager = CorpusManager (documents, load=True)
-
+	corpus_manager = CorpusManager (load=True, save=True)
 
 
 	### Step 3: compute tfidf_vectors ###
@@ -265,15 +370,5 @@ if __name__ == '__main__':
 
 
 
-
-	# --- gets sorted word counts ---
-	# sorted_word_counts = sorted(corpus_manager.word_counts.iteritems(), key=operator.itemgetter(1), reverse=True)
-	# print sorted_word_counts[0:100]
-
-
-
-	### Step 3: save word counts ###
-	# print "---> Status: saving word counts"
-	# corpus_manager.save_word_counts ()
 
 
