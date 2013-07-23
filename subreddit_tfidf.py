@@ -4,7 +4,9 @@ import os
 import sys
 import math
 import pickle
+import operator
 from collections import defaultdict
+
 
 #--- nltk ---
 from nltk import wordpunct_tokenize
@@ -38,7 +40,7 @@ class CorpusManager:
 	###############################[--- DATA MANAGEMENT (LOADING, SAVING) ---]##############################################
 	########################################################################################################################
 
-	# Function: convert_to_regular_dict
+	# Function: convert_to_nondefault_dict
 	# ---------------------------------
 	# converts default_dict to a non-default_dict and returns it
 	def convert_to_nondefault_dict (self, default_dict):
@@ -46,6 +48,16 @@ class CorpusManager:
 		for element in default_dict.keys ():
 			non_default_dict[element] = default_dict[element]
 		return non_default_dict
+
+	# Function: convert_to_default_dict
+	# ---------------------------------
+	# converts nondefault_dict to a defaultdict and returns it
+	def convert_to_default_dict (self, nondefault_dict):
+		default_dict = defaultdict(lambda: 0)
+		for element in nondefault_dict.keys ():
+			default_dict[element] = nondefault_dict[element]
+		return default_dict	
+
 
 
 	# Function: get_non_defaultdict_versions
@@ -57,13 +69,16 @@ class CorpusManager:
 		for doc_name in self.word_counts_by_document.keys ():
 			self.word_counts_by_document_nondefault[doc_name] = self.convert_to_nondefault_dict (self.word_counts_by_document[doc_name])
 
+	# Function: get_defaultdict_versions
+	# ----------------------------------
+	# will convert word_counts_nondefault and word_counts_by_document_nondefault to defaultdicts
+	def get_defaultdict_versions (self):
+		self.word_counts = self.convert_to_default_dict(self.word_counts_nondefault)
+		
+		self.word_counts_by_document = {}
+		for doc_name in self.word_counts_by_document_nondefault:
+			self.word_counts_by_document[doc_name] = self.convert_to_default_dict (self.word_counts_by_document_nondefault[doc_name])
 
-	# Function: load_word_counts
-	# --------------------------
-	# will unload word_counts and word_counts_by_doc from a pickled file
-	def load_word_counts (self):
-		self.word_counts = pickle.load(open(self.word_counts_filepath, 'rb'))
-		self.word_counts_by_document = pickle.load (open(self.word_counts_by_document_filepath, 'rb'))
 
 
 	# Function: save_word_counts
@@ -74,6 +89,16 @@ class CorpusManager:
 
 		pickle.dump (self.word_counts_nondefault, open(self.word_counts_filepath, 'wb'))
 		pickle.dump (self.word_counts_by_document_nondefault, open(self.word_counts_by_document_filepath, 'wb'))
+
+	# Function: load_word_counts
+	# --------------------------
+	# will unload word_counts and word_counts_by_doc from a pickled file
+	def load_word_counts (self):
+		self.word_counts_nondefault = pickle.load(open(self.word_counts_filepath, 'rb'))
+		self.word_counts_by_document_nondefault = pickle.load (open(self.word_counts_by_document_filepath, 'rb'))
+		self.get_defaultdict_versions ()
+
+
 
 
 
@@ -105,15 +130,23 @@ class CorpusManager:
 	# takes in a list of 'texts,' which are dicts with two fields:
 	# - 'name' -> name of the text
 	# - 'content' -> tokenized list of words occuring in the document
-	def __init__ (self, documents_list):
+	# by default, it will find the word counts itself (i.e. it wont load them) and it will save them.
+	def __init__ (self, documents_list, load=False, save=True):
+
+		### Step 1: get documents ###
 		self.documents = documents_list
-		self.fill_word_counts ()
-		self.save_word_counts ()
+	
+		### Step 2: get word counts ###
+		if not load:
+			print "	- finding word counts manually"
+			self.fill_word_counts ()
+		else:
+			print "	- loading word counts from pickled files"
+			self.load_word_counts ()
 
 
-	########################################################################################################################
-	###############################[--- DESTRUCTOR/SAVING STATE ---]########################################################
-	########################################################################################################################
+
+
 
 
 
@@ -148,13 +181,45 @@ class CorpusManager:
 
 		return math.log10( float(len(self.documents)) / float(self.df(query_word)) )
 
-    # Function: tf_idf
+    # Function: tfidf
     # ----------------
     # given the name of a text and a query word, this will return the tf.idf for it.
-	def tf_idf (self, doc_name, query_word):
+	def tfidf (self, doc_name, query_word):
 	
 		return self.tf(doc_name, query_word) * self.idf (query_word)
 
+
+	# Function: compute_tfidf_vectors
+	# -------------------------------
+	# will get the tfidf_vectors for each document in document_list
+	def compute_tfidf_vectors (self):
+
+		for document in self.documents:
+
+			tfidf_vector = defaultdict (lambda: 0)
+			for word in self.word_counts_by_document[document['name']].keys ():
+				tfidf_vector[word] = self.tfidf (document['name'], word)
+
+			document['tfidf_vector'] = tfidf_vector
+
+
+
+	########################################################################################################################
+	###############################[--- INTERFACE/DESCRIPTIONS ---]#########################################################
+	########################################################################################################################
+
+	# Function: print_tfidf_profiles
+	# ---------------------------
+	# for each document, this function will print out the top tf.idf words in it
+	def print_tfidf_profiles (self):
+
+		for document in self.documents:
+			print "	--- profile for " + document['name'] + '---'
+
+			tfidf_profile = sorted(document['tfidf_vector'].iteritems(), key=operator.itemgetter(1), reverse=True)[0:50]
+			for word in tfidf_profile:
+				print "		", word
+			print "\n"
 
 
 
@@ -167,7 +232,7 @@ class CorpusManager:
 # - content: a list of words that are in the document
 def make_document (filepath):
 	text_string = open(filepath, 'r').read ()
-	content = wordpunct_tokenize (text_string)
+	content = wordpunct_tokenize (text_string.lower())
 	name = filepath.split('/')[-1].split('.')[0]
 	return {'name':name, 'content':content}
 
@@ -189,6 +254,26 @@ if __name__ == '__main__':
 
 	### Step 2: create the CorpusManager ###
 	print "---> Status: creating corpus manager"
-	corpus_manager = CorpusManager (documents)
+	corpus_manager = CorpusManager (documents, load=True)
+
+
+
+	### Step 3: compute tfidf_vectors ###
+	print "---> Status: computing tfidf vectors for each document"
+	corpus_manager.compute_tfidf_vectors ()
+	corpus_manager.print_tfidf_profiles ()
+
+
+
+
+	# --- gets sorted word counts ---
+	# sorted_word_counts = sorted(corpus_manager.word_counts.iteritems(), key=operator.itemgetter(1), reverse=True)
+	# print sorted_word_counts[0:100]
+
+
+
+	### Step 3: save word counts ###
+	# print "---> Status: saving word counts"
+	# corpus_manager.save_word_counts ()
 
 
